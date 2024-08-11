@@ -265,44 +265,49 @@ if __name__ == '__main__':
                                     fourcc, tracking.offreader.fps, (args.tar_size * 2, args.tar_size))
     # out_video = cv2.VideoWriter(os.path.join(args.res_folder, 'align.mp4'), fourcc, tracking.offreader.fps, (args.image_size, args.image_size))
     while True:
-        if image_queue.empty():
-            continue
-        tracking.thread_lock.acquire()
-        fn = num_queue.get()
-        out = out_queue.get()
-        tar = image_queue.get()
-        tracking.thread_lock.release()
-        tracking.queue_num -= 1
-        cv2.imshow('faceverse_offline', tar[:, :, ::-1])
-        keyc = cv2.waitKey(1)
-        if keyc == ord('q') or keyc == 27 or tracking.thread_exit == True:
-            tracking.thread_exit = True
-            break
-        # out_video.write(cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
-        tar_video.write(cv2.cvtColor(tar, cv2.COLOR_RGB2BGR))
-        if args.save_for_styleavatar:
-            cv2.imwrite(os.path.join(args.res_folder, 'image', str(
-                fn).zfill(6) + '.png'), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
-            cv2.imwrite(os.path.join(args.res_folder, 'render', str(fn).zfill(
-                6) + '.png'), cv2.cvtColor(tar[:, args.tar_size:args.tar_size * 2], cv2.COLOR_RGB2BGR))
-            cv2.imwrite(os.path.join(args.res_folder, 'uv', str(fn).zfill(
-                6) + '.png'), cv2.cvtColor(tar[:, args.tar_size * 2:], cv2.COLOR_RGB2BGR))
-            if args.crop_size != 1024:
-                mask_in = cv2.resize(cv2.cvtColor(
-                    out, cv2.COLOR_RGB2BGR), (1024, 1024))
-            else:
-                mask_in = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
-            pha = sess.run(
-                ['out'], {'src': mask_in[None, :, :, :].astype(np.float32)})
-            if args.crop_size != 1024:
-                mask_out = cv2.resize(pha[0][0, 0].astype(
-                    np.uint8), (args.crop_size, args.crop_size))
-            else:
-                mask_out = pha[0][0, 0].astype(np.uint8)
-            cv2.imwrite(os.path.join(args.res_folder, 'back',
-                        str(fn).zfill(6) + '.png'), mask_out)
-        print('Write frames:', fn, 'still in queue:', tracking.queue_num)
+        if image_queue.empty() and tracking.queue_num == 0:
+            break  # Exit the loop when all frames have been processed
 
+        if not image_queue.empty():
+            tracking.thread_lock.acquire()
+            fn = num_queue.get()
+            out = out_queue.get()
+            tar = image_queue.get()
+            tracking.thread_lock.release()
+            tracking.queue_num -= 1
+
+            tar_video.write(cv2.cvtColor(tar, cv2.COLOR_RGB2BGR))
+
+            if args.save_for_styleavatar:
+                cv2.imwrite(os.path.join(args.res_folder, 'image', str(
+                    fn).zfill(6) + '.png'), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
+                cv2.imwrite(os.path.join(args.res_folder, 'render', str(fn).zfill(
+                    6) + '.png'), cv2.cvtColor(tar[:, args.tar_size:args.tar_size * 2], cv2.COLOR_RGB2BGR))
+                cv2.imwrite(os.path.join(args.res_folder, 'uv', str(fn).zfill(
+                    6) + '.png'), cv2.cvtColor(tar[:, args.tar_size * 2:], cv2.COLOR_RGB2BGR))
+
+                if args.crop_size != 1024:
+                    mask_in = cv2.resize(cv2.cvtColor(
+                        out, cv2.COLOR_RGB2BGR), (1024, 1024))
+                else:
+                    mask_in = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+
+                pha = sess.run(
+                    ['out'], {'src': mask_in[None, :, :, :].astype(np.float32)})
+
+                if args.crop_size != 1024:
+                    mask_out = cv2.resize(pha[0][0, 0].astype(
+                        np.uint8), (args.crop_size, args.crop_size))
+                else:
+                    mask_out = pha[0][0, 0].astype(np.uint8)
+
+                cv2.imwrite(os.path.join(args.res_folder, 'back',
+                            str(fn).zfill(6) + '.png'), mask_out)
+
+            print('Write frames:', fn, 'still in queue:', tracking.queue_num)
+
+    # Wait for the tracking thread to finish
     tracking.join()
-    # out_video.release()
+
+    # Releasing the video file
     tar_video.release()
