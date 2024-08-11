@@ -237,9 +237,6 @@ if __name__ == '__main__':
         tar_video = cv2.VideoWriter(os.path.join(args.res_folder, 'track.mp4'), fourcc, tracking.offreader.fps, (args.tar_size * 2, args.tar_size))
     #out_video = cv2.VideoWriter(os.path.join(args.res_folder, 'align.mp4'), fourcc, tracking.offreader.fps, (args.image_size, args.image_size))
     while True:
-        if image_queue.empty():
-            cv2.waitKey(15)
-            continue
         tracking.thread_lock.acquire()
         fn = num_queue.get()
         out = out_queue.get()
@@ -247,10 +244,6 @@ if __name__ == '__main__':
         tracking.thread_lock.release()
         tracking.queue_num -= 1
         cv2.imshow('faceverse_offline', tar[:, :, ::-1])
-        keyc = cv2.waitKey(1)
-        if keyc == ord('q') or keyc == 27 or tracking.thread_exit == True:
-            tracking.thread_exit = True
-            break
         #out_video.write(cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
         tar_video.write(cv2.cvtColor(tar, cv2.COLOR_RGB2BGR))
         if args.save_for_styleavatar:
