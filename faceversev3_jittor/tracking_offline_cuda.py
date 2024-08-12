@@ -79,8 +79,7 @@ class Tracking(threading.Thread):
                     self.fvm.trans_tensor[0, 2] + self.fvm.camera_pos[0, 0, 2]) * self.scale / scale - self.fvm.camera_pos[0, 0, 2]
                 lms_center = jt.mean(lms, dim=1)
                 self.fvm.trans_tensor[:, :2] -= (lms_center - lms_proj_center) * \
-                    self.fvm.trans_tensor[:,
-                                          2:3] / self.fvm.focal * 0.5
+                    self.fvm.trans_tensor[:, 2:3] / self.fvm.focal * 0.5
             self.scale = scale
 
             # fitting using only landmarks (rigid)
@@ -98,8 +97,8 @@ class Tracking(threading.Thread):
                 else:
                     rt_reg_loss = losses.get_l2(
                         self.fvm.rot_tensor - rot_c) + losses.get_l2(self.fvm.trans_tensor - trans_c)
-                    loss = lm_loss_val * self.args.lm_loss_w + exp_reg_loss * \
-                        self.args.exp_reg_w + rt_reg_loss * self.args.rt_reg_w
+                    loss = lm_loss_val * self.args.lm_loss_w + id_reg_loss * self.args.id_reg_w + \
+                        exp_reg_loss * self.args.exp_reg_w + rt_reg_loss * self.args.rt_reg_w
                 rigid_optimizer.zero_grad()
                 rigid_optimizer.backward(loss)
                 rigid_optimizer.step()
@@ -200,6 +199,7 @@ class Tracking(threading.Thread):
                 self.queue_num += 1
                 self.thread_lock.release()
             self.frame_ind += 1
+            # self.offreader.crop_center += ((lms_proj[0, 168] / self.offreader.tar_size - 0.5) * self.offreader.half_length * 2).astype(np.int32)
             print(f'Speed:{(time.time() - start_t) / self.frame_ind:.4f}, ' +
                   f'{self.frame_ind:4} / {frame_num:4}, {3e3 * lm_loss_val.item():.4f}')
         self.thread_exit = True
@@ -267,11 +267,10 @@ if __name__ == '__main__':
     else:
         tar_video = cv2.VideoWriter(os.path.join(args.res_folder, 'track.mp4'),
                                     fourcc, tracking.offreader.fps, (args.tar_size * 2, args.tar_size))
-
+    # out_video = cv2.VideoWriter(os.path.join(args.res_folder, 'align.mp4'), fourcc, tracking.offreader.fps, (args.image_size, args.image_size))
     while True:
         if image_queue.empty() and tracking.queue_num == 0:
-            print("All frames processed. Exiting loop.")
-            break
+            break  # Exit the loop when all frames have been processed
 
         if not image_queue.empty():
             tracking.thread_lock.acquire()
@@ -296,19 +295,23 @@ if __name__ == '__main__':
                         out, cv2.COLOR_RGB2BGR), (1024, 1024))
                 else:
                     mask_in = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+
                 pha = sess.run(
                     ['out'], {'src': mask_in[None, :, :, :].astype(np.float32)})
+
                 if args.crop_size != 1024:
                     mask_out = cv2.resize(pha[0][0, 0].astype(
                         np.uint8), (args.crop_size, args.crop_size))
                 else:
                     mask_out = pha[0][0, 0].astype(np.uint8)
+
                 cv2.imwrite(os.path.join(args.res_folder, 'back',
                             str(fn).zfill(6) + '.png'), mask_out)
 
-            print(
-                f'Processed frame: {fn}, remaining in queue: {tracking.queue_num}')
+            print('Write frames:', fn, 'still in queue:', tracking.queue_num)
 
+    # Wait for the tracking thread to finish
     tracking.join()
+
+    # Releasing the video file
     tar_video.release()
-    print("Processing complete, video writer released.")
