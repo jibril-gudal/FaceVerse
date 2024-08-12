@@ -200,8 +200,8 @@ class Tracking(threading.Thread):
                 self.queue_num += 1
                 self.thread_lock.release()
             self.frame_ind += 1
-            logging.info(f'Speed:{(time.time() - start_t) / self.frame_ind:.4f}, ' +
-                         f'{self.frame_ind:4} / {frame_num:4}, {3e3 * lm_loss_val.item():.4f}')
+            print(f'Speed:{(time.time() - start_t) / self.frame_ind:.4f}, ' +
+                  f'{self.frame_ind:4} / {frame_num:4}, {3e3 * lm_loss_val.item():.4f}')
         self.thread_exit = True
 
 
@@ -270,7 +270,7 @@ if __name__ == '__main__':
 
     while True:
         if image_queue.empty() and tracking.queue_num == 0:
-            logging.info("All frames processed. Exiting loop.")
+            print("All frames processed. Exiting loop.")
             break
 
         if not image_queue.empty():
@@ -306,9 +306,9 @@ if __name__ == '__main__':
                 cv2.imwrite(os.path.join(args.res_folder, 'back',
                             str(fn).zfill(6) + '.png'), mask_out)
 
-            logging.info(
+            print(
                 f'Processed frame: {fn}, remaining in queue: {tracking.queue_num}')
 
     tracking.join()
     tar_video.release()
-    logging.info("Processing complete, video writer released.")
+    print("Processing complete, video writer released.")
