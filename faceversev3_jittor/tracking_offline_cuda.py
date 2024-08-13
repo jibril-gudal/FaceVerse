@@ -2,20 +2,21 @@ from util_functions import get_length, ply_from_array_color
 from data_reader import OfflineReader
 import faceverse_cuda.losses as losses
 from faceverse_cuda import get_faceverse
-import logging
-from queue import Queue
-import threading
-import argparse
 import cv2
 import os
 import numpy as np
 import time
 import jittor as jt
+import argparse
+import threading
+from queue import Queue
+import logging
 
 # Ensure these environment variables are set
 os.environ['JT_USE_CUDA_CACHE'] = '1'
 os.environ['JT_CACHE_DIR'] = '/root/.cache/jittor'
 jt.flags.use_cuda = 1
+
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
@@ -82,7 +83,8 @@ class Tracking(threading.Thread):
                     self.fvm.trans_tensor[0, 2] + self.fvm.camera_pos[0, 0, 2]) * self.scale / scale - self.fvm.camera_pos[0, 0, 2]
                 lms_center = jt.mean(lms, dim=1)
                 self.fvm.trans_tensor[:, :2] -= (lms_center - lms_proj_center) * \
-                    self.fvm.trans_tensor[:, 2:3] / self.fvm.focal * 0.5
+                    self.fvm.trans_tensor[:,
+                                          2:3] / self.fvm.focal * 0.5
             self.scale = scale
 
             # fitting using only landmarks (rigid)
@@ -202,7 +204,6 @@ class Tracking(threading.Thread):
                 self.queue_num += 1
                 self.thread_lock.release()
             self.frame_ind += 1
-            # self.offreader.crop_center += ((lms_proj[0, 168] / self.offreader.tar_size - 0.5) * self.offreader.half_length * 2).astype(np.int32)
             print(f'Speed:{(time.time() - start_t) / self.frame_ind:.4f}, ' +
                   f'{self.frame_ind:4} / {frame_num:4}, {3e3 * lm_loss_val.item():.4f}')
         self.thread_exit = True
@@ -263,6 +264,7 @@ if __name__ == '__main__':
         os.makedirs(os.path.join(args.res_folder, 'back'), exist_ok=True)
         import onnxruntime as ort
         sess = ort.InferenceSession('data/rvm_1024_1024_32.onnx')
+
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')
     if args.save_for_styleavatar:
         tar_video = cv2.VideoWriter(os.path.join(args.res_folder, 'track.mp4'),
@@ -270,10 +272,11 @@ if __name__ == '__main__':
     else:
         tar_video = cv2.VideoWriter(os.path.join(args.res_folder, 'track.mp4'),
                                     fourcc, tracking.offreader.fps, (args.tar_size * 2, args.tar_size))
-    # out_video = cv2.VideoWriter(os.path.join(args.res_folder, 'align.mp4'), fourcc, tracking.offreader.fps, (args.image_size, args.image_size))
+
+    start_time = time.time()
     while True:
-        if image_queue.empty() and tracking.queue_num == 0:
-            break  # Exit the loop when all frames have been processed
+        if image_queue.empty() and tracking.thread_exit:
+            break  # Exit when all frames are processed and thread has exited
 
         if not image_queue.empty():
             tracking.thread_lock.acquire()
@@ -286,12 +289,12 @@ if __name__ == '__main__':
             tar_video.write(cv2.cvtColor(tar, cv2.COLOR_RGB2BGR))
 
             if args.save_for_styleavatar:
-                cv2.imwrite(os.path.join(args.res_folder, 'image', str(
-                    fn).zfill(6) + '.png'), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
-                cv2.imwrite(os.path.join(args.res_folder, 'render', str(fn).zfill(
-                    6) + '.png'), cv2.cvtColor(tar[:, args.tar_size:args.tar_size * 2], cv2.COLOR_RGB2BGR))
-                cv2.imwrite(os.path.join(args.res_folder, 'uv', str(fn).zfill(
-                    6) + '.png'), cv2.cvtColor(tar[:, args.tar_size * 2:], cv2.COLOR_RGB2BGR))
+                cv2.imwrite(os.path.join(args.res_folder, 'image',
+                            f'{fn:06d}.png'), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
+                cv2.imwrite(os.path.join(args.res_folder, 'render', f'{fn:06d}.png'), cv2.cvtColor(
+                    tar[:, args.tar_size:args.tar_size * 2], cv2.COLOR_RGB2BGR))
+                cv2.imwrite(os.path.join(args.res_folder, 'uv', f'{fn:06d}.png'), cv2.cvtColor(
+                    tar[:, args.tar_size * 2:], cv2.COLOR_RGB2BGR))
 
                 if args.crop_size != 1024:
                     mask_in = cv2.resize(cv2.cvtColor(
@@ -308,13 +311,19 @@ if __name__ == '__main__':
                 else:
                     mask_out = pha[0][0, 0].astype(np.uint8)
 
-                cv2.imwrite(os.path.join(args.res_folder, 'back',
-                            str(fn).zfill(6) + '.png'), mask_out)
+                cv2.imwrite(os.path.join(args.res_folder,
+                            'back', f'{fn:06d}.png'), mask_out)
 
-            print('Write frames:', fn, 'still in queue:', tracking.queue_num)
+            print(
+                f'Processed frame: {fn}, queue size: {tracking.queue_num}')
 
-    # Wait for the tracking thread to finish
+        time.sleep(0.001)  # Small delay to prevent busy-waiting
+
     tracking.join()
-
-    # Releasing the video file
     tar_video.release()
+
+    total_time = time.time() - start_time
+    total_frames = tracking.frame_ind
+    fps = total_frames / total_time
+    print(
+        f'Processing completed. Total frames: {total_frames}, Time taken: {total_time:.2f} seconds, FPS: {fps:.2f}')
