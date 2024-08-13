@@ -14,7 +14,7 @@ import logging
 
 # Ensure these environment variables are set
 os.environ['JT_USE_CUDA_CACHE'] = '1'
-os.environ['JT_CACHE_DIR'] = '/root/.cache/jittor'
+os.environ['JT_CACHE_DIR'] = '../../root/.cache/jittor'
 jt.flags.use_cuda = 1
 
 
