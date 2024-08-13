@@ -17,13 +17,6 @@ os.environ['JT_USE_CUDA_CACHE'] = '1'
 os.environ['JT_CACHE_DIR'] = '/root/.cache/jittor'
 jt.flags.use_cuda = 1
 
-# Enable memory caching
-jt.flags.cache_mode = 1
-
-# Precompile frequently used operations
-jt.compile_cache()
-
-
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -325,5 +318,3 @@ if __name__ == '__main__':
 
     # Releasing the video file
     tar_video.release()
-
-    jt.save_cache()
