@@ -70,12 +70,12 @@ class Tracking(threading.Thread):
                 nonrigid_optimizer = jt.optim.Adam([self.fvm.id_tensor, self.fvm.gamma_tensor, self.fvm.tex_tensor,
                                                     self.fvm.rot_tensor, self.fvm.trans_tensor, self.fvm.eye_tensor], lr=5e-3, betas=(0.5, 0.9))
             else:
+                num_iters_rf = 30  # Reduced from 100 to 30
+                num_iters_nrf = 10  # Reduced from 30 to 10
                 rigid_optimizer = jt.optim.Adam([self.fvm.rot_tensor, self.fvm.trans_tensor, self.fvm.exp_tensor, self.fvm.eye_tensor],
-                                                lr=1e-3, betas=(0.5, 0.9))
+                                                lr=5e-3, betas=(0.5, 0.9))  # Slightly higher learning rate for faster adjustment
                 nonrigid_optimizer = jt.optim.Adam([self.fvm.exp_tensor, self.fvm.gamma_tensor,
-                                                    self.fvm.rot_tensor, self.fvm.trans_tensor, self.fvm.eye_tensor], lr=1e-3, betas=(0.5, 0.9))
-                num_iters_rf = 100
-                num_iters_nrf = 30
+                                                    self.fvm.rot_tensor, self.fvm.trans_tensor, self.fvm.eye_tensor], lr=5e-3, betas=(0.5, 0.9))  # Same higher learning rate
 
             scale = ((lms_detect - lms_detect.mean(0)) ** 2).mean() ** 0.5
             if self.scale != 0:
