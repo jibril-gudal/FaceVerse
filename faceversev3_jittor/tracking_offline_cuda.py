@@ -5,7 +5,7 @@ import time
 import jittor as jt
 import argparse
 import threading
-from queue import Queue
+from queue import Queue, Empty
 import logging
 import onnxruntime as ort
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +21,7 @@ jt.flags.use_cuda = 1
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class BatchOfflineReader:
@@ -67,113 +68,128 @@ class Tracking(threading.Thread):
             self.fvm.parameters(), lr=5e-3, betas=(0.5, 0.9))
         start_time = time.time()
 
-        while not self.thread_exit:
-            batch_data = self.offreader.get_batch()
-            if not batch_data:
-                self.thread_exit = True
-                break
+        try:
+            while not self.thread_exit:
+                batch_data = self.offreader.get_batch()
+                if not batch_data:
+                    self.thread_exit = True
+                    break
 
-            batch_align = np.stack([data[1] for data in batch_data])
-            batch_lms = np.stack([data[2] for data in batch_data])
+                batch_align = np.stack([data[1] for data in batch_data])
+                batch_lms = np.stack([data[2] for data in batch_data])
 
-            lms = jt.array(batch_lms, dtype=jt.float32).stop_grad()
-            img_tensor = jt.array(
-                batch_align, dtype=jt.float32).stop_grad().transpose((0, 3, 1, 2))
+                lms = jt.array(batch_lms, dtype=jt.float32).stop_grad()
+                img_tensor = jt.array(
+                    batch_align, dtype=jt.float32).stop_grad().transpose((0, 3, 1, 2))
 
-            if self.frame_ind == 0:
-                num_iters = 200
-            else:
-                num_iters = 10
+                num_iters = 200 if self.frame_ind == 0 else 10
 
-            scale = ((batch_lms - batch_lms.mean(1, keepdims=True))
-                     ** 2).mean() ** 0.5
-            if self.scale != 0:
-                self.fvm.trans_tensor[:, 2] = (
-                    self.fvm.trans_tensor[:, 2] + self.fvm.camera_pos[0, 0, 2]) * self.scale / scale - self.fvm.camera_pos[0, 0, 2]
-            self.scale = scale
+                scale = ((batch_lms - batch_lms.mean(1, keepdims=True))
+                         ** 2).mean() ** 0.5
+                if self.scale != 0:
+                    self.fvm.trans_tensor[:, 2] = (
+                        self.fvm.trans_tensor[:, 2] + self.fvm.camera_pos[0, 0, 2]) * self.scale / scale - self.fvm.camera_pos[0, 0, 2]
+                self.scale = scale
 
-            for _ in range(num_iters):
-                pred_dict = self.fvm(
-                    self.fvm.get_packed_tensors(), render=False)
-                lm_loss_val = losses.lm_loss(
-                    pred_dict['lms_proj'], lms, self.lm_weights, img_size=self.args.tar_size)
-                exp_reg_loss = losses.get_l2(
-                    self.fvm.exp_tensor[:, 40:]) + losses.get_l2(self.fvm.exp_tensor[:, :40])
-                loss = lm_loss_val * self.args.lm_loss_w + exp_reg_loss * self.args.exp_reg_w
+                for _ in range(num_iters):
+                    pred_dict = self.fvm(
+                        self.fvm.get_packed_tensors(), render=False)
+                    lm_loss_val = losses.lm_loss(
+                        pred_dict['lms_proj'], lms, self.lm_weights, img_size=self.args.tar_size)
+                    exp_reg_loss = losses.get_l2(
+                        self.fvm.exp_tensor[:, 40:]) + losses.get_l2(self.fvm.exp_tensor[:, :40])
+                    loss = lm_loss_val * self.args.lm_loss_w + exp_reg_loss * self.args.exp_reg_w
 
-                optimizer.zero_grad()
-                optimizer.backward(loss)
-                optimizer.step()
-                self.fvm.exp_tensor[self.fvm.exp_tensor < 0] *= 0
+                    optimizer.zero_grad()
+                    optimizer.backward(loss)
+                    optimizer.step()
+                    self.fvm.exp_tensor[self.fvm.exp_tensor < 0] *= 0
 
-            with jt.no_grad():
-                coeffs = self.fvm.get_packed_tensors()
-                coeffs[:, self.fvm.id_dims + 8:self.fvm.id_dims + 10] = self.eyes_refine(
-                    coeffs[:, self.fvm.id_dims + 8:self.fvm.id_dims + 10])
+                with jt.no_grad():
+                    coeffs = self.fvm.get_packed_tensors()
+                    logger.debug(
+                        f"Coeffs shape before eyes_refine: {coeffs.shape}")
+                    coeffs[:, self.fvm.id_dims + 8:self.fvm.id_dims + 10] = self.eyes_refine(
+                        coeffs[:, self.fvm.id_dims + 8:self.fvm.id_dims + 10])
+                    logger.debug(
+                        f"Coeffs shape after eyes_refine: {coeffs.shape}")
 
-                if self.frame_ind == 0:
-                    id_c, exp_c, tex_c, rot_c, gamma_c, trans_c, eye_c = self.fvm.split_coeffs(
-                        coeffs[0])
-                    np.savetxt(os.path.join(self.args.res_folder,
-                               'id.txt'), id_c.numpy(), fmt='%.3f')
-                    np.savetxt(os.path.join(self.args.res_folder,
-                               'exp.txt'), exp_c.numpy(), fmt='%.3f')
+                    if self.frame_ind == 0:
+                        try:
+                            id_c, exp_c, tex_c, rot_c, gamma_c, trans_c, eye_c = self.fvm.split_coeffs(
+                                coeffs[0])
+                            np.savetxt(os.path.join(
+                                self.args.res_folder, 'id.txt'), id_c.numpy(), fmt='%.3f')
+                            np.savetxt(os.path.join(
+                                self.args.res_folder, 'exp.txt'), exp_c.numpy(), fmt='%.3f')
+                        except Exception as e:
+                            logger.error(f"Error in split_coeffs: {str(e)}")
+                            logger.error(f"Coeffs shape: {coeffs.shape}")
+                            raise
 
-                pred_dict = self.fvm(coeffs, render=True, surface=True,
-                                     use_color=True, render_uv=self.args.save_for_styleavatar)
-                rendered_img = jt.clamp(pred_dict['rendered_img'].transpose(
-                    (0, 2, 3, 1)), 0, 255).uint8().numpy()
-
-                if self.args.save_for_styleavatar:
-                    uv_img = jt.clamp(pred_dict['uv_img'].transpose(
+                    pred_dict = self.fvm(coeffs, render=True, surface=True,
+                                         use_color=True, render_uv=self.args.save_for_styleavatar)
+                    rendered_img = jt.clamp(pred_dict['rendered_img'].transpose(
                         (0, 2, 3, 1)), 0, 255).uint8().numpy()
 
-                for i, (frame_num, outimg, _, _, _) in enumerate(batch_data):
                     if self.args.save_for_styleavatar:
-                        drive_img = np.concatenate(
-                            [batch_align[i], rendered_img[i, :, :, :3], uv_img[i, :, :, :3]], axis=1)
-                    else:
-                        drive_img = np.concatenate(
-                            [batch_align[i], rendered_img[i, :, :, :3]], axis=1)
-                    self.queue.put((frame_num, outimg, drive_img))
+                        uv_img = jt.clamp(pred_dict['uv_img'].transpose(
+                            (0, 2, 3, 1)), 0, 255).uint8().numpy()
 
-            self.frame_ind += len(batch_data)
-            if self.frame_ind % 100 == 0:
-                elapsed = time.time() - start_time
-                fps = self.frame_ind / elapsed
-                print(f"Processed {self.frame_ind} frames. FPS: {fps:.2f}")
+                    for i, (frame_num, outimg, _, _, _) in enumerate(batch_data):
+                        if self.args.save_for_styleavatar:
+                            drive_img = np.concatenate(
+                                [batch_align[i], rendered_img[i, :, :, :3], uv_img[i, :, :, :3]], axis=1)
+                        else:
+                            drive_img = np.concatenate(
+                                [batch_align[i], rendered_img[i, :, :, :3]], axis=1)
+                        self.queue.put((frame_num, outimg, drive_img))
+
+                self.frame_ind += len(batch_data)
+                if self.frame_ind % 100 == 0:
+                    elapsed = time.time() - start_time
+                    fps = self.frame_ind / elapsed
+                    logger.info(
+                        f"Processed {self.frame_ind} frames. FPS: {fps:.2f}")
+
+        except Exception as e:
+            logger.error(f"Error in Tracking thread: {str(e)}")
+            self.thread_exit = True
 
         self.thread_exit = True
 
 
 def process_output(args, frame_num, outimg, drive_img, out_video, sess):
-    out_video.write(cv2.cvtColor(drive_img, cv2.COLOR_RGB2BGR))
+    try:
+        out_video.write(cv2.cvtColor(drive_img, cv2.COLOR_RGB2BGR))
 
-    if args.save_for_styleavatar:
-        cv2.imwrite(os.path.join(args.res_folder, 'image',
-                    f'{frame_num:06d}.png'), cv2.cvtColor(outimg, cv2.COLOR_RGB2BGR))
-        cv2.imwrite(os.path.join(args.res_folder, 'render', f'{frame_num:06d}.png'), cv2.cvtColor(
-            drive_img[:, args.tar_size:args.tar_size*2], cv2.COLOR_RGB2BGR))
-        cv2.imwrite(os.path.join(args.res_folder, 'uv', f'{frame_num:06d}.png'), cv2.cvtColor(
-            drive_img[:, args.tar_size*2:], cv2.COLOR_RGB2BGR))
+        if args.save_for_styleavatar:
+            cv2.imwrite(os.path.join(args.res_folder, 'image',
+                        f'{frame_num:06d}.png'), cv2.cvtColor(outimg, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(args.res_folder, 'render', f'{frame_num:06d}.png'), cv2.cvtColor(
+                drive_img[:, args.tar_size:args.tar_size*2], cv2.COLOR_RGB2BGR))
+            cv2.imwrite(os.path.join(args.res_folder, 'uv', f'{frame_num:06d}.png'), cv2.cvtColor(
+                drive_img[:, args.tar_size*2:], cv2.COLOR_RGB2BGR))
 
-        if args.crop_size != 1024:
-            mask_in = cv2.resize(cv2.cvtColor(
-                outimg, cv2.COLOR_RGB2BGR), (1024, 1024))
-        else:
-            mask_in = cv2.cvtColor(outimg, cv2.COLOR_RGB2BGR)
+            if args.crop_size != 1024:
+                mask_in = cv2.resize(cv2.cvtColor(
+                    outimg, cv2.COLOR_RGB2BGR), (1024, 1024))
+            else:
+                mask_in = cv2.cvtColor(outimg, cv2.COLOR_RGB2BGR)
 
-        pha = sess.run(
-            ['out'], {'src': mask_in[None, :, :, :].astype(np.float32)})
+            pha = sess.run(
+                ['out'], {'src': mask_in[None, :, :, :].astype(np.float32)})
 
-        if args.crop_size != 1024:
-            mask_out = cv2.resize(pha[0][0, 0].astype(
-                np.uint8), (args.crop_size, args.crop_size))
-        else:
-            mask_out = pha[0][0, 0].astype(np.uint8)
+            if args.crop_size != 1024:
+                mask_out = cv2.resize(pha[0][0, 0].astype(
+                    np.uint8), (args.crop_size, args.crop_size))
+            else:
+                mask_out = pha[0][0, 0].astype(np.uint8)
 
-        cv2.imwrite(os.path.join(args.res_folder, 'back',
-                    f'{frame_num:06d}.png'), mask_out)
+            cv2.imwrite(os.path.join(args.res_folder, 'back',
+                        f'{frame_num:06d}.png'), mask_out)
+    except Exception as e:
+        logger.error(f"Error in process_output: {str(e)}")
 
 
 if __name__ == '__main__':
@@ -193,7 +209,7 @@ if __name__ == '__main__':
                         help='Can only be used on linux system.')
     parser.add_argument('--save_for_styleavatar', action='store_true',
                         help='Save images and parameters for styleavatar.')
-    parser.add_argument('--batch_size', type=int, default=16,
+    parser.add_argument('--batch_size', type=int, default=8,
                         help='Number of frames to process in each batch')
     parser.add_argument('--skip_frames', type=int, default=0,
                         help='Skip the first several frames.')
@@ -251,13 +267,16 @@ if __name__ == '__main__':
                 executor.submit(process_output, args, frame_num,
                                 outimg, drive_img, out_video, sess)
                 frame_count += 1
-            except Queue.Empty:
+            except Empty:
                 continue
+            except Exception as e:
+                logger.error(f"Error in main loop: {str(e)}")
+                break
 
     tracking.join()
     out_video.release()
 
     total_time = time.time() - start_time
     fps = frame_count / total_time
-    print(
+    logger.info(
         f'Processing completed. Total frames: {frame_count}, Time taken: {total_time:.2f} seconds, FPS: {fps:.2f}')
