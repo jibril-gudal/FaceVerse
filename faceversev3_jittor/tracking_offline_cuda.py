@@ -43,6 +43,51 @@ class BatchOfflineReader:
         return batch
 
 
+class FaceVerseModel(jt.nn.Module):
+    def __init__(self, batch_size, focal, img_size):
+        super(FaceVerseModel, self).__init__()
+        # ... (other initialization code remains the same)
+        self.id_dims = 150
+        self.exp_dims = 52
+        self.tex_dims = 251
+
+    def split_coeffs(self, coeffs):
+        logger.debug(f"Coeffs shape in split_coeffs: {coeffs.shape}")
+
+        # Handle 2D input
+        if len(coeffs.shape) == 2:
+            coeffs = coeffs[0]  # Take the first row if it's 2D
+
+        # Ensure coeffs is 1D
+        if len(coeffs.shape) != 1:
+            raise ValueError(f"Expected 1D tensor, got shape {coeffs.shape}")
+
+        try:
+            id_coeff = coeffs[:self.id_dims]
+            exp_coeff = coeffs[self.id_dims:self.id_dims + self.exp_dims]
+            tex_coeff = coeffs[self.id_dims +
+                               self.exp_dims:self.id_dims + self.exp_dims + self.tex_dims]
+            rot_coeff = coeffs[self.id_dims + self.exp_dims +
+                               self.tex_dims:self.id_dims + self.exp_dims + self.tex_dims + 3]
+            gamma_coeff = coeffs[self.id_dims + self.exp_dims + self.tex_dims +
+                                 3:self.id_dims + self.exp_dims + self.tex_dims + 30]
+            trans_coeff = coeffs[self.id_dims + self.exp_dims + self.tex_dims +
+                                 30:self.id_dims + self.exp_dims + self.tex_dims + 33]
+            eye_coeff = coeffs[self.id_dims + self.exp_dims + self.tex_dims +
+                               33:self.id_dims + self.exp_dims + self.tex_dims + 35]
+        except Exception as e:
+            logger.error(f"Error in split_coeffs: {str(e)}")
+            logger.error(f"Coeffs shape: {coeffs.shape}")
+            logger.error(f"self.id_dims: {self.id_dims}")
+            logger.error(f"self.exp_dims: {self.exp_dims}")
+            logger.error(f"self.tex_dims: {self.tex_dims}")
+            raise
+
+        return id_coeff, exp_coeff, tex_coeff, rot_coeff, gamma_coeff, trans_coeff, eye_coeff
+
+    # ... (rest of the FaceVerseModel class remains the same)
+
+
 class Tracking(threading.Thread):
     def __init__(self, args):
         super(Tracking, self).__init__()
@@ -117,7 +162,7 @@ class Tracking(threading.Thread):
                     if self.frame_ind == 0:
                         try:
                             id_c, exp_c, tex_c, rot_c, gamma_c, trans_c, eye_c = self.fvm.split_coeffs(
-                                coeffs[0])
+                                coeffs)
                             np.savetxt(os.path.join(
                                 self.args.res_folder, 'id.txt'), id_c.numpy(), fmt='%.3f')
                             np.savetxt(os.path.join(
@@ -235,6 +280,13 @@ if __name__ == '__main__':
                         help='weight for texture reflectance loss.')
 
     args = parser.parse_args()
+
+    os.makedirs(args.res_folder, exist_ok=True)
+    if args.save_for_styleavatar:
+        os.makedirs(os.path.join(args.res_folder, 'image'), exist_ok=True)
+        os.makedirs(os.path.join(args.res_folder, 'uv'), exist_ok=True)
+        os.makedirs(os.path.join(args.res_folder, 'render'), exist_ok=True)
+        args = parser.parse_args()
 
     os.makedirs(args.res_folder, exist_ok=True)
     if args.save_for_styleavatar:
