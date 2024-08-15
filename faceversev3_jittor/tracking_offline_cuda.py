@@ -286,13 +286,6 @@ if __name__ == '__main__':
         os.makedirs(os.path.join(args.res_folder, 'image'), exist_ok=True)
         os.makedirs(os.path.join(args.res_folder, 'uv'), exist_ok=True)
         os.makedirs(os.path.join(args.res_folder, 'render'), exist_ok=True)
-        args = parser.parse_args()
-
-    os.makedirs(args.res_folder, exist_ok=True)
-    if args.save_for_styleavatar:
-        os.makedirs(os.path.join(args.res_folder, 'image'), exist_ok=True)
-        os.makedirs(os.path.join(args.res_folder, 'uv'), exist_ok=True)
-        os.makedirs(os.path.join(args.res_folder, 'render'), exist_ok=True)
         os.makedirs(os.path.join(args.res_folder, 'back'), exist_ok=True)
 
     tracking = Tracking(args)
