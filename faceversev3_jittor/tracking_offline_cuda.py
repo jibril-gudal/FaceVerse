@@ -11,9 +11,9 @@ import os
 import numpy as np
 import time
 import jittor as jt
+
 jt.flags.use_cuda = 1
 jt.set_global_seed(0)
-
 
 # Use a thread-safe queue with a larger buffer
 image_queue = Queue(maxsize=100)
@@ -89,6 +89,8 @@ class Tracking(threading.Thread):
             # Generate output
             with jt.no_grad():
                 coeffs = self.fvm.get_packed_tensors().detach()
+                print(f"Coeffs shape: {coeffs.shape}")  # Debug print
+
                 coeffs[:, self.fvm.id_dims + 8:self.fvm.id_dims + 10] = self.eyes_refine(
                     coeffs[:, self.fvm.id_dims + 8:self.fvm.id_dims + 10])
                 self.prev_coeffs = coeffs.clone()
@@ -152,7 +154,7 @@ def process_output(args, frame_num, outimg, drive_img, rendered_img, uv_img, out
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description="FaceVerse offline tracker (maximally optimized)")
+        description="FaceVerse offline tracker (fully optimized)")
     parser.add_argument('--input', type=str, required=True,
                         help='input video path')
     parser.add_argument('--output', type=str, required=True,
