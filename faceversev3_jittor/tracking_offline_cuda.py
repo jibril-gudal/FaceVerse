@@ -303,7 +303,7 @@ if __name__ == '__main__':
                                     fourcc, tracking.offreader.reader.fps, (args.tar_size * 2, args.tar_size))
 
     sess = ort.InferenceSession('data/rvm_1024_1024_32.onnx',
-                                providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+                                providers=['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider'])
 
     start_time = time.time()
     frame_count = 0
