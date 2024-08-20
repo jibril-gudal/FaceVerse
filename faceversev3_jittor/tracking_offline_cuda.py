@@ -1,22 +1,23 @@
-import cv2
-import os
-import numpy as np
-import time
-import jittor as jt
-import argparse
-import threading
-from queue import Queue, Empty
-import logging
-import onnxruntime as ort
-from concurrent.futures import ThreadPoolExecutor
-
-from util_functions import get_length, ply_from_array_color
-from data_reader import OfflineReader
-import faceverse_cuda.losses as losses
 from faceverse_cuda import get_faceverse
+import faceverse_cuda.losses as losses
+from data_reader import OfflineReader
+from util_functions import get_length, ply_from_array_color
+import gc
+from concurrent.futures import ThreadPoolExecutor
+import onnxruntime as ort
+import logging
+from queue import Queue, Empty
+import threading
+import argparse
+import jittor as jt
+import time
+import numpy as np
+import os
+import cv2
+
 
 os.environ['JT_USE_CUDA_CACHE'] = '1'
-os.environ['JT_CACHE_DIR'] = '../../root/.cache/jittor'
+os.environ['JT_CACHE_DIR'] = '/root/.cache/jittor'
 jt.flags.use_cuda = 1
 
 logging.basicConfig(level=logging.DEBUG,
@@ -46,7 +47,6 @@ class BatchOfflineReader:
 class FaceVerseModel(jt.nn.Module):
     def __init__(self, batch_size, focal, img_size):
         super(FaceVerseModel, self).__init__()
-        # ... (other initialization code remains the same)
         self.id_dims = 150
         self.exp_dims = 52
         self.tex_dims = 251
@@ -84,8 +84,6 @@ class FaceVerseModel(jt.nn.Module):
             raise
 
         return id_coeff, exp_coeff, tex_coeff, rot_coeff, gamma_coeff, trans_coeff, eye_coeff
-
-    # ... (rest of the FaceVerseModel class remains the same)
 
 
 class Tracking(threading.Thread):
@@ -197,6 +195,8 @@ class Tracking(threading.Thread):
                     logger.info(
                         f"Processed {self.frame_ind} frames. FPS: {fps:.2f}")
 
+                gc.collect()  # Add garbage collection after processing each batch
+
         except Exception as e:
             logger.error(f"Error in Tracking thread: {str(e)}")
             self.thread_exit = True
@@ -233,6 +233,8 @@ def process_output(args, frame_num, outimg, drive_img, out_video, sess):
 
             cv2.imwrite(os.path.join(args.res_folder, 'back',
                         f'{frame_num:06d}.png'), mask_out)
+
+        gc.collect()  # Add garbage collection after processing each frame
     except Exception as e:
         logger.error(f"Error in process_output: {str(e)}")
 
@@ -291,7 +293,8 @@ if __name__ == '__main__':
     tracking = Tracking(args)
     tracking.start()
 
-    fourcc = cv2.VideoWriter_fourcc(*'MP4V')
+    # Change the codec to H.264 and use .mp4 extension
+    fourcc = cv2.VideoWriter_fourcc(*'avc1')
     if args.save_for_styleavatar:
         out_video = cv2.VideoWriter(os.path.join(args.res_folder, 'track.mp4'),
                                     fourcc, tracking.offreader.reader.fps, (args.tar_size * 3, args.tar_size))
