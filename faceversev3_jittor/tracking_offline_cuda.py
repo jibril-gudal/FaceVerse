@@ -256,12 +256,12 @@ if __name__ == '__main__':
     # ONNX Runtime session setup
     available_providers = ort.get_available_providers()
     preferred_providers = ['AzureExecutionProvider',
-                           'CUDAExecutionProvider', 'CPUExecutionProvider']
+                           'CUDAExecutionProvider']
     usable_providers = [
         provider for provider in preferred_providers if provider in available_providers]
     print("the usable providers are", usable_providers)
     sess = ort.InferenceSession(
-        'data/rvm_1024_1024_32.onnx')
+        'data/rvm_1024_1024_32.onnx',  providers=preferred_providers)
 
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')
     if args.save_for_styleavatar:
