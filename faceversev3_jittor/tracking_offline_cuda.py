@@ -12,9 +12,6 @@ import time
 import numpy as np
 import os
 import cv2
-Certainly. Here's the full code without any UI elements, incorporating the ONNX Runtime GPU support:
-
-```python
 
 
 jt.flags.use_cuda = 1
