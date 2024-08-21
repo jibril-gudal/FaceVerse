@@ -255,8 +255,7 @@ if __name__ == '__main__':
 
     # ONNX Runtime session setup
     available_providers = ort.get_available_providers()
-    preferred_providers = ['AzureExecutionProvider',
-                           'CUDAExecutionProvider']
+    preferred_providers = ['CUDAExecutionProvider']
     usable_providers = [
         provider for provider in preferred_providers if provider in available_providers]
     print("the usable providers are", usable_providers)
