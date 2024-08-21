@@ -1,21 +1,25 @@
-import logging
-import onnxruntime as ort
 from util_functions import get_length, ply_from_array_color
 from data_reader import OfflineReader
 import faceverse_cuda.losses as losses
 from faceverse_cuda import get_faceverse
+import onnxruntime as ort
+import logging
 from queue import Queue
 import threading
 import argparse
-import cv2
-import os
-import numpy as np
-import time
 import jittor as jt
+import time
+import numpy as np
+import os
+import cv2
+Certainly. Here's the full code without any UI elements, incorporating the ONNX Runtime GPU support:
+
+```python
+
+
 jt.flags.use_cuda = 1
 
-
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -28,7 +32,7 @@ class Tracking(threading.Thread):
     def __init__(self, args):
         super(Tracking, self).__init__()
         self.args = args
-        self.fvm, self.fvd = get_faceverse(batch_size=1, focal=int(
+        self.fvm, self.fvd = get_faceverse(batch_size=self.args.batch_size, focal=int(
             1315 / 512 * self.args.tar_size), img_size=self.args.tar_size)
         self.lm_weights = losses.get_lm_weights()
         self.offreader = OfflineReader(
@@ -40,14 +44,14 @@ class Tracking(threading.Thread):
         self.scale = 0
 
     def eyes_refine(self, eye_coeffs):
-        for i in range(2):
-            if eye_coeffs[0, i] > 0.4:
-                eye_coeffs[0, i] = (eye_coeffs[0, i] - 0.4) * 2 + 0.4
+        for i in range(self.args.batch_size):
+            for j in range(2):
+                if eye_coeffs[i, j] > 0.4:
+                    eye_coeffs[i, j] = (eye_coeffs[i, j] - 0.4) * 2 + 0.4
         return eye_coeffs
 
     def run(self):
         while not self.thread_exit:
-            # load data
             detected, align, lms_detect, outimg, frame_num = self.offreader.get_data()
             if not detected:
                 if not align:
@@ -80,7 +84,6 @@ class Tracking(threading.Thread):
                     self.fvm.trans_tensor[0, 2] + self.fvm.camera_pos[0, 0, 2]) * self.scale / scale - self.fvm.camera_pos[0, 0, 2]
             self.scale = scale
 
-            # fitting using only landmarks (rigid)
             for i in range(num_iters_rf):
                 pred_dict = self.fvm(
                     self.fvm.get_packed_tensors(), render=False)
@@ -103,7 +106,6 @@ class Tracking(threading.Thread):
                 self.fvm.exp_tensor[self.fvm.exp_tensor < 0] *= 0
 
             if self.args.use_dr:
-                # fitting with differentiable rendering
                 for i in range(num_iters_nrf):
                     pred_dict = self.fvm(
                         self.fvm.get_packed_tensors(), render=True)
@@ -130,7 +132,6 @@ class Tracking(threading.Thread):
                     nonrigid_optimizer.step()
                     self.fvm.exp_tensor[self.fvm.exp_tensor < 0] *= 0
 
-            # show data
             with jt.no_grad():
                 if self.frame_ind == 0:
                     start_t = time.time()
@@ -145,14 +146,12 @@ class Tracking(threading.Thread):
                     np.savetxt(os.path.join(self.args.res_folder,
                                'exp.txt'), exp_c[0].numpy(), fmt='%.3f')
                     self.first_exp = exp_c.detach().clone()
-                # for styleavatar test
                 if self.args.save_for_styleavatar and self.args.id_folder is not None:
                     id_fisrt = jt.array(np.loadtxt(os.path.join(self.args.id_folder, 'id.txt')).astype(
                         np.float32)[None, :], dtype=jt.float32)
                     exp_fisrt = jt.array(np.loadtxt(os.path.join(
                         self.args.id_folder, 'exp.txt')).astype(np.float32)[None, :], dtype=jt.float32)
                     coeffs[:, :self.fvm.id_dims] = id_fisrt
-                    # !!!only if the first frame is neutral expression!!!
                     if self.args.first_frame_is_neutral:
                         coeffs[:, self.fvm.id_dims:self.fvm.id_dims +
                                self.fvm.exp_dims] += exp_fisrt - self.first_exp
@@ -196,8 +195,8 @@ class Tracking(threading.Thread):
                 self.queue_num += 1
                 self.thread_lock.release()
             self.frame_ind += 1
-            print(f'Speed:{(time.time() - start_t) / self.frame_ind:.4f}, ' +
-                  f'{self.frame_ind:4} / {frame_num:4}, {3e3 * lm_loss_val.item():.4f}')
+            logger.info(f'Speed:{(time.time() - start_t) / self.frame_ind:.4f}, ' +
+                        f'{self.frame_ind:4} / {frame_num:4}, {3e3 * lm_loss_val.item():.4f}')
         self.thread_exit = True
 
 
@@ -206,10 +205,10 @@ if __name__ == '__main__':
         description="FaceVerse offline tracker (backend version)")
     parser.add_argument('--input', type=str, required=True,
                         help='input video path')
-    parser.add_argument('--res_folder', type=str, required=True,
-                        help='output directory')
-    parser.add_argument('--id_folder', type=str, default=None,
-                        help='id directory')
+    parser.add_argument('--res_folder', type=str,
+                        required=True, help='output directory')
+    parser.add_argument('--id_folder', type=str,
+                        default=None, help='id directory')
     parser.add_argument('--first_frame_is_neutral', action='store_true',
                         help='only if the first frame is neutral expression')
     parser.add_argument('--smooth', action='store_true',
@@ -218,22 +217,24 @@ if __name__ == '__main__':
                         help='Can only be used on linux system.')
     parser.add_argument('--save_for_styleavatar', action='store_true',
                         help='Save images and parameters for styleavatar.')
+    parser.add_argument('--batch_size', type=int, default=1,
+                        help='batch_size is set to 1.')
     parser.add_argument('--skip_frames', type=int, default=0,
                         help='Skip the first several frames.')
-    parser.add_argument('--crop_size', type=int, default=1024,
-                        help='size for output image.')
-    parser.add_argument('--image_size', type=int, default=1024,
-                        help='size for output image.')
+    parser.add_argument('--crop_size', type=int,
+                        default=1024, help='size for output image.')
+    parser.add_argument('--image_size', type=int,
+                        default=1024, help='size for output image.')
     parser.add_argument('--tar_size', type=int, default=256,
                         help='size for rendering window. We use a square window.')
-    parser.add_argument('--lm_loss_w', type=float, default=1e3,
-                        help='weight for landmark loss')
-    parser.add_argument('--rgb_loss_w', type=float, default=1e-2,
-                        help='weight for rgb loss')
+    parser.add_argument('--lm_loss_w', type=float,
+                        default=1e3, help='weight for landmark loss')
+    parser.add_argument('--rgb_loss_w', type=float,
+                        default=1e-2, help='weight for rgb loss')
     parser.add_argument('--id_reg_w', type=float, default=3e-2,
                         help='weight for id coefficient regularizer')
-    parser.add_argument('--rt_reg_w', type=float, default=3e-2,
-                        help='weight for rt regularizer')
+    parser.add_argument('--rt_reg_w', type=float,
+                        default=3e-2, help='weight for rt regularizer')
     parser.add_argument('--exp_reg_w', type=float, default=3e-3,
                         help='weight for expression coefficient regularizer')
     parser.add_argument('--tex_reg_w', type=float, default=3e-3,
@@ -255,12 +256,12 @@ if __name__ == '__main__':
 
     # ONNX Runtime session setup
     available_providers = ort.get_available_providers()
-    preferred_providers = ['CUDAExecutionProvider']
+    preferred_providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
     usable_providers = [
         provider for provider in preferred_providers if provider in available_providers]
-    print("the usable providers are", usable_providers)
+    logger.info(f"Using ONNX Runtime providers: {usable_providers}")
     sess = ort.InferenceSession(
-        'data/rvm_1024_1024_32.onnx',  providers=preferred_providers)
+        'data/rvm_1024_1024_32.onnx', providers=usable_providers)
 
     fourcc = cv2.VideoWriter_fourcc(*'MP4V')
     if args.save_for_styleavatar:
@@ -286,9 +287,9 @@ if __name__ == '__main__':
             cv2.imwrite(os.path.join(args.res_folder, 'image',
                         f'{fn:06d}.png'), cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
             cv2.imwrite(os.path.join(args.res_folder, 'render', f'{fn:06d}.png'), cv2.cvtColor(
-                tar[:, args.tar_size:args.tar_size * 2], cv2.COLOR_RGB2BGR))
+                tar[:, args.tar_size:args.tar_size*2], cv2.COLOR_RGB2BGR))
             cv2.imwrite(os.path.join(args.res_folder, 'uv', f'{fn:06d}.png'), cv2.cvtColor(
-                tar[:, args.tar_size * 2:], cv2.COLOR_RGB2BGR))
+                tar[:, args.tar_size*2:], cv2.COLOR_RGB2BGR))
             if args.crop_size != 1024:
                 mask_in = cv2.resize(cv2.cvtColor(
                     out, cv2.COLOR_RGB2BGR), (1024, 1024))
